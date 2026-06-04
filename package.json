@@ -2,6 +2,12 @@
   "name": "difflog",
   "version": "26.6.4",
   "description": "Find a commit by fuzzy-searching git log and printing its diff.",
+  "homepage": "https://github.com/lropero/difflog#readme",
+  "bugs": "https://github.com/lropero/difflog/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lropero/difflog.git"
+  },
   "license": "ISC",
   "author": "Lei Mococ <lropero@gmail.com>",
   "type": "module",
@@ -12,21 +18,13 @@
     "difflog.js"
   ],
   "scripts": {
-    "lint": "prettier --write . && standard --fix",
-    "sort": "sort-package-json",
-    "upgrade": "upgradeps -u",
-    "version": "node -v && npm -v"
+    "lint": "npx prettier@latest --write . && npx standard@latest --fix",
+    "sort": "npx sort-package-json@latest"
   },
   "dependencies": {
     "chalk": "5.6.2",
     "commander": "15.0.0",
     "fuzzysort": "3.1.0"
-  },
-  "devDependencies": {
-    "prettier": "3.8.3",
-    "sort-package-json": "4.0.0",
-    "standard": "17.1.2",
-    "upgradeps": "2.3.1"
   },
   "engines": {
     "node": ">=20"
