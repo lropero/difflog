@@ -1,0 +1,33 @@
+{
+  "name": "difflog",
+  "version": "0.1.0",
+  "description": "Find a commit by fuzzy-searching git log and printing its diff.",
+  "license": "ISC",
+  "author": "Lei Mococ <lropero@gmail.com>",
+  "type": "module",
+  "bin": {
+    "difflog": "./difflog.js"
+  },
+  "files": [
+    "difflog.js"
+  ],
+  "scripts": {
+    "lint": "prettier --write . && standard --fix",
+    "sort": "sort-package-json",
+    "upgrade": "upgradeps -u",
+    "version": "node -v && npm -v"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "fuzzysort": "3.1.0"
+  },
+  "devDependencies": {
+    "prettier": "3.8.3",
+    "sort-package-json": "4.0.0",
+    "standard": "17.1.2",
+    "upgradeps": "2.3.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
