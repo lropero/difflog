@@ -27,10 +27,16 @@ Then outputs the diff for the matched commit, excluding `package-lock.json`, usi
 ## Options
 
 ```txt
+-b, --body                Include commit body in fuzzy search
 -e, --exclude <path...>   Exclude one or more paths from the diff
 -o, --output <file>       Write diff output to a file
+-s, --stat                Output diff stat instead of the full patch
 -u, --unified <lines>     Number of unified diff context lines
 ```
+
+CLI messages (errors, the saved confirmation, ambiguous lists, and hints) are lightly colored for readability. The actual diff or stat is always raw Git output with no coloring, so it stays safe to pipe or redirect.
+
+Output size in bytes is reported only when writing to a file with `-o`. When the diff or stat goes to stdout, nothing extra is printed before or after it.
 
 ## Examples
 
@@ -44,6 +50,32 @@ Save a commit diff to a file:
 
 ```bash
 npx difflog -o diff.txt -- JIRA-123 mobile
+# Saved diff for abc1234 -> JIRA-123 Fix mobile view to diff.txt (123456 bytes)
+```
+
+Show a diff stat instead of the full patch:
+
+```bash
+npx difflog -s -- JIRA-123 mobile
+```
+
+Save a diff stat to a file:
+
+```bash
+npx difflog -s -o stat.txt -- JIRA-123 mobile
+# Saved stat for abc1234 -> JIRA-123 Fix mobile view to stat.txt (1234 bytes)
+```
+
+Combine excludes with a stat:
+
+```bash
+npx difflog -s -e package-lock.json -- JIRA-123 mobile
+```
+
+Include the commit body in the fuzzy search (matching beyond the subject):
+
+```bash
+npx difflog -b -- "rollback plan"
 ```
 
 Exclude one file:
@@ -99,6 +131,8 @@ This prevents search terms from being interpreted as option values.
 - full commit hash
 - short commit hash
 - commit subject
+
+With `-b, --body`, the commit body is also included in the search. `-b` only affects matching; it does not change the diff or stat output, and ambiguous match lists still show only the short hash and subject.
 
 If there is one clear best match, it prints or saves that commit’s diff.
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import chalk from 'chalk'
 import fuzzysort from 'fuzzysort'
 import { Command } from 'commander'
 import { execFileSync } from 'node:child_process'
@@ -20,13 +21,14 @@ const LIST_LIMIT = 10
 
 class UserError extends Error {}
 
-function buildDiff (commit, { exclude, unified }, cwd) {
+function buildDiff (commit, { exclude, stat, unified }, cwd) {
   // `<hash>^!` diffs the commit against its parent, yielding a plain diff
   // without the commit header/message that `git show` would include. A root
   // commit has no parent, so diff it against this repo's empty tree instead
   // (otherwise `git diff <hash>` would compare against the working tree).
   const args = ['diff']
-  if (unified !== undefined) args.push(`-U${unified}`)
+  if (stat) args.push('--stat')
+  else if (unified !== undefined) args.push(`-U${unified}`)
   if (commit.isRoot) args.push(emptyTree(cwd), commit.hash)
   else args.push(`${commit.hash}^!`)
   if (exclude && exclude.length > 0) {
@@ -35,11 +37,8 @@ function buildDiff (commit, { exclude, unified }, cwd) {
   return git(args, cwd)
 }
 
-function chooseCommit (commits, query) {
-  const results = fuzzysort.go(query, commits, {
-    keys: ['hash', 'short', 'subject'],
-    limit: LIST_LIMIT
-  })
+function chooseCommit (commits, query, keys) {
+  const results = fuzzysort.go(query, commits, { keys, limit: LIST_LIMIT })
 
   if (results.length === 0) return { kind: 'none' }
 
@@ -69,12 +68,15 @@ function git (args, cwd) {
     })
   } catch (err) {
     const stderr = (err.stderr || '').toString().trim()
-    throw new UserError(stderr || `git ${args.join(' ')} failed`)
+    throw new UserError(chalk.red(stderr || `git ${args.join(' ')} failed`))
   }
 }
 
-function loadCommits (cwd) {
-  const format = ['%H', '%h', '%s', '%P'].join(FIELD) + RECORD
+function loadCommits (cwd, { body } = {}) {
+  // Only request the body (%b) when body search is enabled. Parents (%P) stay
+  // last so root/merge detection works regardless of whether %b is present.
+  const fields = body ? ['%H', '%h', '%s', '%b', '%P'] : ['%H', '%h', '%s', '%P']
+  const format = fields.join(FIELD) + RECORD
   let out
   try {
     out = git(['log', `--pretty=format:${format}`], cwd)
@@ -85,25 +87,28 @@ function loadCommits (cwd) {
   }
   return out
     .split(RECORD)
-    .map(line => line.replace(/^\n/, ''))
+    .map(record => record.replace(/^\n/, ''))
     .filter(Boolean)
-    .map(line => {
-      const [hash, short, subject, parents] = line.split(FIELD)
-      const parentList = (parents || '').trim().split(/\s+/).filter(Boolean)
-      return {
+    .map(record => {
+      const parts = record.split(FIELD)
+      const [hash, short, subject] = parts
+      const parentList = (parts[parts.length - 1] || '').trim().split(/\s+/).filter(Boolean)
+      const commit = {
         hash,
         short,
         subject: subject || '',
         isMerge: parentList.length > 1,
         isRoot: parentList.length === 0
       }
+      if (body) commit.body = (parts[3] || '').trim()
+      return commit
     })
 }
 
 function parseUnified (value) {
   const n = Number(value)
   if (!Number.isInteger(n) || n < 0) {
-    throw new UserError(`Invalid value for --unified: "${value}". Expected a non-negative integer.`)
+    throw new UserError(chalk.red(`Invalid value for --unified: "${value}". Expected a non-negative integer.`))
   }
   return n
 }
@@ -115,47 +120,51 @@ function repoRoot () {
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
   } catch {
-    throw new UserError('Not a git repository. Run difflog from inside a git repo.')
+    throw new UserError(chalk.red('Not a git repository. Run difflog from inside a git repo.'))
   }
 }
 
 function run (query, opts) {
   if (!query || query.length === 0) {
-    throw new UserError('Missing search terms.\nPass them after -- so they are not consumed by --exclude.\nUsage: difflog [options] -- <search terms>\nExample: difflog -e package-lock.json -o diff.txt -- JIRA-123 mobile')
+    throw new UserError(chalk.red('Missing search terms.') + '\n' + chalk.gray('Pass them after -- so they are not consumed by --exclude.\nUsage: difflog [options] -- <search terms>\nExample: difflog -e package-lock.json -o diff.txt -- JIRA-123 mobile'))
   }
 
   const cwd = repoRoot()
-  const commits = loadCommits(cwd)
+  const commits = loadCommits(cwd, { body: opts.body })
   if (commits.length === 0) {
-    throw new UserError('This repository has no commits yet.')
+    throw new UserError(chalk.red('This repository has no commits yet.'))
   }
 
   const queryText = query.join(' ')
   const unified = opts.unified === undefined ? undefined : parseUnified(opts.unified)
+  const keys = opts.body ? ['hash', 'short', 'subject', 'body'] : ['hash', 'short', 'subject']
 
-  const outcome = chooseCommit(commits, queryText)
+  const outcome = chooseCommit(commits, queryText, keys)
 
   if (outcome.kind === 'none') {
-    throw new UserError(`No commits matched "${queryText}". Try different or fewer search terms.`)
+    throw new UserError(chalk.red(`No commits matched "${queryText}".`) + ' ' + chalk.gray('Try different search terms.'))
   }
 
   if (outcome.kind === 'ambiguous') {
-    const lines = outcome.results.map((r, i) => `  ${i + 1}. ${r.obj.short}  ${r.obj.subject}`)
-    throw new UserError(`Multiple commits matched "${queryText}". Refine your search:\n${lines.join('\n')}`)
+    const lines = outcome.results.map((r, i) => `  ${i + 1}. ${chalk.cyan(r.obj.short)}  ${r.obj.subject}`)
+    throw new UserError(chalk.yellow(`Multiple commits matched "${queryText}". Refine your search:`) + '\n' + lines.join('\n'))
   }
 
   const commit = outcome.commit
 
   if (commit.isMerge) {
-    throw new UserError(`"${commit.short}" (${commit.subject}) is a merge commit.\nThe diff for a merge is ambiguous in this tool; inspect it directly, e.g.:\n  git show ${commit.short}\n  git show --first-parent ${commit.short}`)
+    throw new UserError(chalk.yellow(`${chalk.cyan(commit.short)} (${commit.subject}) is a merge commit.`) + '\n' + chalk.gray(`The diff for a merge is ambiguous in this tool; inspect it directly, e.g.:\n  git show ${commit.short}\n  git show --first-parent ${commit.short}`))
   }
 
-  const diff = buildDiff(commit, { exclude: opts.exclude, unified }, cwd)
+  const diff = buildDiff(commit, { exclude: opts.exclude, stat: opts.stat, unified }, cwd)
+  const kind = opts.stat ? 'stat' : 'diff'
 
   if (opts.output) {
     writeFileSync(opts.output, diff)
-    console.log(`Saved diff for ${commit.short} (${commit.subject}) to ${opts.output}`)
+    const bytes = Buffer.byteLength(diff)
+    console.log(chalk.green(`Saved ${kind} for `) + chalk.cyan(commit.short) + chalk.green(` -> ${commit.subject} to ${opts.output} `) + chalk.gray(`(${bytes} bytes)`))
   } else {
+    // Stdout stays raw git output: no size message, nothing extra.
     process.stdout.write(diff)
   }
 }
@@ -164,10 +173,12 @@ const program = new Command()
 
 program
   .name('difflog')
-  .description('Fuzzy-search git history by commit message and print or save the commit diff.\nPass search terms after -- (e.g. difflog -e package-lock.json -- JIRA-123 mobile).')
-  .argument('[query...]', 'search terms; pass after -- so they are not absorbed by --exclude')
-  .option('-e, --exclude <path...>', 'exclude one or more paths from the diff (repeatable; put search terms after --)', (value, previous) => previous.concat(value), [])
+  .description('Fuzzy-search git history by commit message and print or save the commit diff.')
+  .argument('[query...]', 'search terms (pass after --)')
+  .option('-b, --body', 'include commit body in fuzzy search')
+  .option('-e, --exclude <path...>', 'exclude one or more paths from the diff (repeatable)', (value, previous = []) => previous.concat(value))
   .option('-o, --output <file>', 'write diff output to a file')
+  .option('-s, --stat', 'output diff stat instead of the full patch')
   .option('-u, --unified <lines>', 'number of unified diff context lines')
   .action((query, opts) => {
     try {

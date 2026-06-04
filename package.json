@@ -1,6 +1,6 @@
 {
   "name": "difflog",
-  "version": "0.1.0",
+  "version": "26.6.4",
   "description": "Find a commit by fuzzy-searching git log and printing its diff.",
   "license": "ISC",
   "author": "Lei Mococ <lropero@gmail.com>",
@@ -18,6 +18,7 @@
     "version": "node -v && npm -v"
   },
   "dependencies": {
+    "chalk": "5.6.2",
     "commander": "15.0.0",
     "fuzzysort": "3.1.0"
   },
