@@ -1,7 +1,7 @@
 {
   "name": "difflog",
-  "version": "26.6.4",
-  "description": "Find a commit by fuzzy-searching git log and printing its diff.",
+  "version": "26.6.30",
+  "description": "Find a commit by typo-tolerant search over git history and print its diff.",
   "homepage": "https://github.com/lropero/difflog#readme",
   "bugs": "https://github.com/lropero/difflog/issues",
   "repository": {
@@ -23,10 +23,9 @@
   },
   "dependencies": {
     "chalk": "5.6.2",
-    "commander": "15.0.0",
-    "fuzzysort": "3.1.0"
+    "commander": "15.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   }
 }
