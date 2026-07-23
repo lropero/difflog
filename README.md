@@ -1,8 +1,8 @@
 # difflog
 
-Find a commit by typo-tolerant search over `git` history and print its diff.
+Find commits using typo-tolerant `git` history search, and optionally output a single-commit or inclusive-range diff.
 
-`difflog` is a small CLI helper for quickly finding a commit by message or hash and outputting the diff for that commit. It uses token-aware, typo-tolerant matching: it tolerates small typos in words but does not match arbitrary scattered characters.
+By default `difflog` is a **lookup tool**: it lists the commits matching your search and stops. It prints a diff or stat only when you ask for one with `-o/--output` or `-s/--stat`. Matching is token-aware and typo-tolerant — it tolerates small typos but never matches arbitrary scattered characters.
 
 ## Usage
 
@@ -10,251 +10,137 @@ Find a commit by typo-tolerant search over `git` history and print its diff.
 npx difflog [options] -- <search terms>
 ```
 
-Example:
-
-```bash
-npx difflog -e package-lock.json -o diff.txt -u 999999 -- JIRA-123 mobile
-```
-
-This searches the Git history for a commit similar to:
-
-```txt
-JIRA-123 mobile
-```
-
-Then outputs the diff for the matched commit, excluding `package-lock.json`, using `999999` unified context lines, and saving the result to `diff.txt`.
-
 ## Options
 
 ```txt
--b, --body                Include commit body in the search
--e, --exclude <path...>   Exclude one or more paths from the diff
--m, --meta                Prepend a commit metadata header to the output
--o, --output <file>       Write diff output to a file
--s, --stat                Output diff stat instead of the full patch
--u, --unified <lines>     Number of unified diff context lines
+-b, --body                 Include commit body in the search
+-e, --exclude <path...>    Exclude one or more paths from the diff
+-f, --from <start-query>   Include changes starting with the matched commit (inclusive range)
+-m, --meta                 Prepend commit or range metadata to the output
+-o, --output [file]        Output a full diff (stdout, or to a file)
+-s, --stat                 Output a diff stat instead of the full patch
+-u, --unified <lines>      Number of unified diff context lines
 ```
 
-CLI messages (errors, the saved confirmation, ambiguous lists, and hints) are lightly colored for readability. The actual diff or stat is always raw Git output with no coloring, so it stays safe to pipe or redirect.
+## Modes
 
-By default, stdout is raw Git diff/stat output with nothing printed before or after it. The only exception is `-m, --meta`, which prepends a plain (uncolored) metadata header to the output.
+| You pass          | Mode       | Result                                    |
+| ----------------- | ---------- | ----------------------------------------- |
+| _(nothing)_       | **lookup** | Lists matching commits, oldest to newest. |
+| `-o` / `--output` | **diff**   | Outputs a full patch (stdout or a file).  |
+| `-s` / `--stat`   | **stat**   | Outputs a diff stat (stdout or a file).   |
 
-Output size in bytes is reported only when writing to a file with `-o`, and that byte count covers everything written to the file, including the `--meta` header when used.
+`--stat` chooses stat output over a full diff: a bare `-o` is redundant and prints the stat to stdout, while `-o <file>` saves the stat to that file. CLI messages are lightly colored; the diff/stat itself is always raw Git output, safe to pipe or redirect.
 
-When writing with `-o`, output goes to a temporary file that is moved into place only after Git succeeds, so a failed run never leaves a partial or misleading file at the requested path. Streamed stdout has no such guarantee: if Git fails after output has started, stdout may already contain partial output.
+### Lookup (default)
 
-## Examples
+Lookup lists every match in topological history order (oldest to newest, every parent before its descendants — never by fuzzy score) and never prints a diff:
 
-Print a commit diff to stdout:
+```txt
+4 commits matched "JIRA-123" (oldest to newest):
+
+  1. a1b2c3d  JIRA-123 add account settings page
+  2. b2c3d4e  JIRA-123 fix form validation
+  3. c3d4e5f  JIRA-123 fix mobile layout
+  4. d4e5f6a  JIRA-123 finalize account settings
+```
+
+If more than 10 commits match, the **oldest** 10 are shown so a newer match never hides an older one. With no match, `difflog` suggests `-b/--body`.
+
+### Diff (`-o`)
 
 ```bash
-npx difflog -- JIRA-123 mobile
+npx difflog -o -- d4e5f6a             # full diff to stdout
+npx difflog -o diff.txt -- d4e5f6a    # save to a file
+npx difflog --output=diff.txt -- d4e5f6a
+# Saved diff for d4e5f6a -> JIRA-123 finalize account settings to "diff.txt" (123456 bytes)
 ```
 
-Save a commit diff to a file:
+Saving is **atomic**: output is streamed through a temp file and renamed into place only after Git succeeds, so a failed run never leaves a partial file (stdout has no such guarantee). An empty filename (`--output=`) is rejected. Shape the diff with `-e/--exclude <path...>` and `-u/--unified <lines>`:
 
 ```bash
-npx difflog -o diff.txt -- JIRA-123 mobile
-# Saved diff for abc1234 -> JIRA-123 Fix mobile view to diff.txt (123456 bytes)
+npx difflog -o -e package-lock.json -u 999999 -- JIRA-123 mobile
 ```
 
-Show a diff stat instead of the full patch:
+### Stat (`-s`)
 
 ```bash
-npx difflog -s -- JIRA-123 mobile
+npx difflog -s -- d4e5f6a              # stat to stdout
+npx difflog -s -o stat.txt -- d4e5f6a  # stat to a file
 ```
 
-Save a diff stat to a file:
+### Inclusive range (`-f, --from`)
+
+`--from <start-query>` produces an **inclusive** range diff, equivalent to `git diff A^1 B`: the positional terms resolve the ending commit `B`, and `--from` resolves the starting commit `A` (using the same matching rules). It is the net snapshot difference, not a replay of patches, so edits later undone by `B` do not appear.
 
 ```bash
-npx difflog -s -o stat.txt -- JIRA-123 mobile
-# Saved stat for abc1234 -> JIRA-123 Fix mobile view to stat.txt (1234 bytes)
+npx difflog -o --from a1b2c3d -- d4e5f6a               # range diff to stdout
+npx difflog -o combined.diff --from a1b2c3d -- d4e5f6a # range diff to a file
+npx difflog -s --from a1b2c3d -- d4e5f6a               # range stat
 ```
 
-Combine excludes with a stat:
+`difflog` verifies `A` is an ancestor of `B` (`git merge-base --is-ancestor`): a reversed range is reported with the corrected command, and unrelated branches are rejected. A root starting commit is compared against the empty tree, and `A === B` is allowed for a non-merge commit.
+
+## `--` is required with `-o/--output`
+
+Because `-o/--output` takes an **optional** argument, `--` must appear **before every search term** whenever `-o/--output` is used (a late `--` is not enough). Otherwise a search term could be silently read as the output filename and create or overwrite a file, so `difflog` rejects such invocations up front without touching the filesystem.
 
 ```bash
-npx difflog -s -e package-lock.json -- JIRA-123 mobile
+# Valid
+npx difflog -o -- JIRA-123 fix 3
+npx difflog -o diff.txt -- JIRA-123 fix 3
+npx difflog -s -o stat.txt -- JIRA-123 fix 3
+
+# Invalid (rejected, nothing written)
+npx difflog -o JIRA-123 fix 3               # JIRA-123 read as the output filename
+npx difflog -o diff.txt JIRA-123 -- fix 3   # separator too late
 ```
 
-Include the commit body in the search (matching beyond the subject):
+Passing terms after `--` also keeps them from being consumed by `--exclude`.
 
-```bash
-npx difflog -b -- "rollback plan"
-```
+## Matching
 
-Prepend a commit metadata header (handy for code review or AI review):
+`difflog` matches a commit's full hash, short hash, and subject; add `-b/--body` to also search the body (matching only — the diff is unchanged). Your search is split into tokens and matched against a commit's meaningful tokens (words, hash prefixes, ticket-like forms):
 
-```bash
-npx difflog -m -- JIRA-123 mobile
-```
+- Separators split tokens, so `i18n` matches `i18n`, `i18n.ts`, and `src/i18n/messages`, but not scattered `i`/`1`/`8`/`n`.
+- Typos are tolerated for 4+ character alphabetic words (`notifcation` → `notification`).
+- Compact and separated ticket forms match both ways: `JIRA-177`, `jira 177`, and `jira177` all match the same ticket; the number stays exact, so `JIRA-177` never matches `JIRA-178`.
 
-Save a diff with its metadata header to a file (byte count includes the header):
+Short and numeric terms are stricter, so they don't pull in noise:
 
-```bash
-npx difflog --meta -o diff.txt -- JIRA-123 mobile
-```
-
-Prepend metadata to a stat:
-
-```bash
-npx difflog -m -s -- JIRA-123 mobile
-```
-
-Exclude one file:
-
-```bash
-npx difflog -e package-lock.json -- JIRA-123 mobile
-```
-
-Exclude multiple files:
-
-```bash
-npx difflog -e package-lock.json yarn.lock pnpm-lock.yaml -- JIRA-123 mobile
-```
-
-Repeat `-e`:
-
-```bash
-npx difflog -e package-lock.json -e yarn.lock -- JIRA-123 mobile
-```
-
-Use a large unified context:
-
-```bash
-npx difflog -u 999999 -- JIRA-123 mobile
-```
-
-Search by short hash:
-
-```bash
-npx difflog -- abc1234
-```
-
-Search by full hash:
-
-```bash
-npx difflog -- abc1234567890abcdef1234567890abcdef12345678
-```
-
-## Important: use `--` before search terms
-
-When using options, especially `--exclude`, pass search terms after `--`:
-
-```bash
-npx difflog -e package-lock.json -- JIRA-123 mobile
-```
-
-This prevents search terms from being interpreted as option values.
-
-## Matching behavior
-
-`difflog` searches commit history using:
-
-- full commit hash
-- short commit hash
-- commit subject
-
-With `-b, --body`, the commit body is also included in the search. `-b` only affects matching; it does not change the diff or stat output.
-
-`difflog` uses **token-aware, typo-tolerant matching**. Your search is split on whitespace, and each term is matched against the meaningful tokens of a commit (words, hash prefixes, and ticket-like forms). It is fuzzy in a useful sense — it tolerates small typos and close word matches — but it does **not** match arbitrary characters scattered across unrelated text.
-
-What this means in practice:
-
-- Tokens are split on separators too, so a search for `i18n` matches `i18n`, `i18n.ts`, `fix-i18n-routing`, and `src/i18n/messages`, but not unrelated text where only the characters `i`, `1`, `8`, `n` happen to appear.
-- Typos are tolerated for longer alphabetic words: `notifcation` matches `notification`, and `interantionalization` matches `internationalization`.
-- A multi-term search like `mobile spacing` matches commits where both meaningful terms are present (or typo-close), preferably in the subject.
-- Compact and separated ticket-like forms match each other both ways: `JIRA-177`, `jira 177`, and `jira177` all match the same ticket (likewise `SMTY-318` / `smty318`). The number stays exact, so `JIRA-177` never matches `JIRA-178`.
-
-**Very short and numeric terms are matched more strictly**, so they don't pull in noise:
-
-- Numeric-only terms (such as ticket, PR, or issue numbers) must match a token exactly, so `JIRA-177` never drifts to `JIRA-178`.
-- 1–2 character terms must match a token exactly.
+- Numeric-only terms must match a token exactly.
+- 1–2 character terms must match exactly.
 - 3-character terms allow an exact or prefix match only.
 - 4+ character alphabetic terms allow typo tolerance.
 
-`i18n` is short and contains digits, but it is a meaningful developer token, so it is matched like a literal token rather than a loose fuzzy pattern.
+When one match is clearly strongest it is used; commits that match in the same way are treated as ambiguous and listed for you to refine, rather than guessed.
 
-### Ranking and ambiguity
+## Metadata (`-m, --meta`)
 
-Matches are ranked predictably, roughly preferring (strongest first): an exact full/short hash or hash prefix; a full phrase in the subject; all terms in the subject; typo-tolerant subject matches; and then, only with `-b`, the equivalent body matches and mixed subject/body matches.
-
-If there is one clear best match, it prints or saves that commit’s diff.
-
-If multiple commits match equally well, `difflog` does not guess. It prints a ranked list and asks you to refine the search. Ambiguity comes from multiple genuinely meaningful matches, not from scattered-character noise.
-
-When `-b` is used and a result matched through its body rather than the visible subject or hash, the ranked list adds a short, single-line `body:` excerpt with the matched token highlighted, so you can see why it matched. These excerpts appear only in the terminal refine-your-search message, never in saved diff/stat output, and full commit bodies are never printed.
-
-Example:
+Prepends a short, plain-text (never colorized) header before the diff or stat; for a file the reported byte count includes it.
 
 ```txt
-Multiple commits matched "mobile". Refine your search:
-  1. abc1234  JIRA-123 Fix mobile view for tenant clients page
-  2. def5678  JIRA-124 Improve mobile spacing in assessment form
-```
-
-Example with a body excerpt (only with `-b`, when the body is what matched):
-
-```txt
-Multiple commits matched "i18n". Refine your search:
-  1. abc1234  SMTY-123 Update i18n message loading
-  2. def5678  SMTY-124 Refactor locale files
-     body: ...moved i18n resources into src/i18n/messages...
-```
-
-## Commit metadata (`-m, --meta`)
-
-With `-m, --meta`, `difflog` prepends a short, plain-text header before the diff or stat:
-
-```txt
-commit abc1234567890abcdef1234567890abcdef123456 (abc1234)
+commit d4e5f6a000000000000000000000000000000000 (d4e5f6a)
 Author: Jane Doe <jane@example.com>
 Date: 2026-06-04 10:15:00 -0700
-Subject: JIRA-123 Fix mobile view
-
-diff --git a/...
+Subject: JIRA-123 finalize account settings
 ```
 
-The header includes the full hash, short hash, author (when available), commit date (when available), and subject. It is never colorized, so the saved file (or piped output) stays plain text. When writing with `-o`, the reported byte count includes the header.
+For a range the header shows `From:` / `Through:` lines instead (and describes an empty-tree comparison when `A` is a root commit).
 
-## Squash merges and commit body search
+## Diff & merge behavior
 
-By default, `difflog` searches commits reachable from the current `HEAD`.
+- **Single commit:** equivalent to `git diff <commit>^!` — a plain diff without the `git show` header/message.
+- **Root commit:** compared against the repository's empty tree (derived dynamically, so SHA-1 is not assumed).
+- **Merge commit:** rejected as a single-commit diff and as a range **start** (the pre-merge state is ambiguous), but allowed as a range **end** (its tree is an unambiguous snapshot). Inspect merges directly with `git show <commit>`.
 
-In squash-and-merge workflows, the individual commits from a feature branch are collapsed into a single commit on the target branch, so the original branch commits may not appear in the target branch history at all.
+## Squash merges and `-b`
 
-`-b, --body` can help here: squash commits may record the original commit messages in their body (depending on the merge platform, its settings, and whether the squash message was edited), so searching bodies can surface the squash commit that absorbed the change you remember.
+`difflog` searches commits reachable from `HEAD`. In squash-and-merge workflows the original branch commits may be gone; `-b/--body` can still find the squash commit when it records the original messages in its body. The resulting diff is the squash commit's, and unreachable branch commits cannot be recovered.
 
-A few limitations to keep in mind:
+## Terminal safety
 
-- If `-b` finds a squash commit by its body, the resulting diff is the diff of the **squash commit**, not the original branch commit.
-- `difflog` cannot recover original branch commits that are no longer reachable in your local repository.
-- Searching across all refs or deep branch history is intentionally not part of this release.
-
-## Diff behavior
-
-For normal commits, `difflog` outputs the equivalent of:
-
-```bash
-git diff <commit>^!
-```
-
-That means the output is a plain diff for the selected commit, without the commit header or commit message metadata included by `git show`.
-
-For root commits, `difflog` compares the root commit against the repository’s empty tree, so the output shows what the first commit introduced.
-
-## Merge commits
-
-Merge commits are not diffed automatically.
-
-A merge commit can be interpreted in multiple ways, so `difflog` stops with a clear message instead of producing misleading output.
-
-For merge commits, inspect the commit manually with Git:
-
-```bash
-git show <commit>
-git show --first-parent <commit>
-```
+The text `difflog` formats itself (queries, subjects, body excerpts, metadata, filenames, confirmations, error details, and Git error messages) is escaped for display, so control/ANSI/bidi characters from the repository or your query cannot forge or reorder terminal output. This is display-only: filesystem paths are unchanged, and the raw `git diff` / `git diff --stat` stream is emitted byte-for-byte. Git history is parsed from NUL-delimited records, so subjects and bodies cannot forge parser boundaries.
 
 ## Requirements
 

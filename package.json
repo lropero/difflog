@@ -1,7 +1,7 @@
 {
   "name": "difflog",
-  "version": "26.6.30",
-  "description": "Find a commit by typo-tolerant search over git history and print its diff.",
+  "version": "26.7.23",
+  "description": "Find commits using typo-tolerant git history search, and optionally output a single-commit or inclusive-range diff.",
   "homepage": "https://github.com/lropero/difflog#readme",
   "bugs": "https://github.com/lropero/difflog/issues",
   "repository": {
